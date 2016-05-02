@@ -17,6 +17,7 @@ package com.netflix.eureka.registry;
 
 import javax.inject.Inject;
 import javax.ws.rs.core.MediaType;
+
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
@@ -52,9 +53,11 @@ import com.netflix.eureka.resources.ServerCodecs;
 import com.netflix.eureka.transport.EurekaServerHttpClients;
 import com.netflix.servo.monitor.Monitors;
 import com.netflix.servo.monitor.Stopwatch;
-import com.sun.jersey.api.client.ClientResponse;
-import com.sun.jersey.api.client.filter.GZIPContentEncodingFilter;
-import com.sun.jersey.client.apache4.ApacheHttpClient4;
+
+import javax.ws.rs.client.Client;
+import javax.ws.rs.core.Response;
+
+import org.glassfish.jersey.message.GZipEncoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,7 +73,7 @@ import org.slf4j.LoggerFactory;
 public class RemoteRegionRegistry implements LookupService<String> {
     private static final Logger logger = LoggerFactory.getLogger(RemoteRegionRegistry.class);
 
-    private final ApacheHttpClient4 discoveryApacheClient;
+    private final Client discoveryApacheClient;
     private final EurekaJerseyClient discoveryJerseyClient;
     private final com.netflix.servo.monitor.Timer fetchRegistryTimer;
     private final URL remoteRegionURL;
@@ -124,7 +127,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
         // should we enable GZip decoding of responses based on Response Headers?
         if (serverConfig.shouldGZipContentFromRemoteRegion()) {
             // compressed only if there exists a 'Content-Encoding' header whose value is "gzip"
-            discoveryApacheClient.addFilter(new GZIPContentEncodingFilter(false));
+            discoveryApacheClient.register(new GZipEncoder());
         }
 
         String ip = null;
@@ -134,7 +137,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
             logger.warn("Cannot find localhost ip", e);
         }
         EurekaServerIdentity identity = new EurekaServerIdentity(ip);
-        discoveryApacheClient.addFilter(new EurekaIdentityHeaderFilter(identity));
+        discoveryApacheClient.register(new EurekaIdentityHeaderFilter(identity));
 
         // Configure new transport layer (candidate for injecting in the future)
         EurekaHttpClient newEurekaHttpClient = null;
@@ -328,7 +331,7 @@ public class RemoteRegionRegistry implements LookupService<String> {
      * @param response
      *            the HttpResponse object.
      */
-    private void closeResponse(ClientResponse response) {
+    private void closeResponse(Response response) {
         if (response != null) {
             try {
                 response.close();
@@ -380,17 +383,19 @@ public class RemoteRegionRegistry implements LookupService<String> {
                 logger.error("Can't get a response from " + this.remoteRegionURL, t);
             }
         } else {
-            ClientResponse response = null;
+            Response response = null;
             try {
                 String urlPath = delta ? "apps/delta" : "apps/";
 
-                response = discoveryApacheClient.resource(this.remoteRegionURL + urlPath)
+                response = discoveryApacheClient
+                        .target(this.remoteRegionURL.toString() + urlPath)
+                        .request()
                         .accept(MediaType.APPLICATION_JSON_TYPE)
-                        .get(ClientResponse.class);
+                        .get();
                 int httpStatus = response.getStatus();
                 if (httpStatus >= 200 && httpStatus < 300) {
                     logger.debug("Got the data successfully : {}", httpStatus);
-                    return response.getEntity(Applications.class);
+                    return response.readEntity(Applications.class);
                 }
                 logger.warn("Cannot get the data from {} : {}", this.remoteRegionURL, httpStatus);
             } catch (Throwable t) {

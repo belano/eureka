@@ -2,6 +2,7 @@ package com.netflix.eureka.transport;
 
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response.Status;
+
 import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -10,23 +11,41 @@ import java.net.UnknownHostException;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.appinfo.InstanceInfo.InstanceStatus;
 import com.netflix.discovery.EurekaIdentityHeaderFilter;
+import com.netflix.discovery.provider.EmptyEntity;
 import com.netflix.discovery.shared.transport.EurekaHttpResponse;
 import com.netflix.discovery.shared.transport.jersey.AbstractJerseyEurekaHttpClient;
 import com.netflix.discovery.shared.transport.jersey.EurekaJerseyClient;
 import com.netflix.discovery.shared.transport.jersey.EurekaJerseyClientImpl.EurekaJerseyClientBuilder;
 import com.netflix.eureka.EurekaServerConfig;
 import com.netflix.eureka.EurekaServerIdentity;
-import com.netflix.eureka.cluster.DynamicGZIPContentEncodingFilter;
+import com.netflix.eureka.cluster.DynamicGZIPContentConfigFilter;
 import com.netflix.eureka.cluster.HttpReplicationClient;
 import com.netflix.eureka.cluster.PeerEurekaNode;
 import com.netflix.eureka.cluster.protocol.ReplicationList;
 import com.netflix.eureka.cluster.protocol.ReplicationListResponse;
 import com.netflix.eureka.resources.ASGResource.ASGStatus;
 import com.netflix.eureka.resources.ServerCodecs;
-import com.sun.jersey.api.client.ClientResponse;
-import com.sun.jersey.api.client.WebResource;
-import com.sun.jersey.api.client.WebResource.Builder;
-import com.sun.jersey.client.apache4.ApacheHttpClient4;
+
+
+
+//import com.sun.jersey.api.client.ClientResponse;
+//import com.sun.jersey.api.client.WebResource;
+//import com.sun.jersey.api.client.WebResource.Builder;
+//import com.sun.jersey.client.apache4.ApacheHttpClient4;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.Entity;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.Status;
+
+import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.UnknownHostException;
+
+import org.glassfish.jersey.message.GZipEncoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +59,7 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
     private static final Logger logger = LoggerFactory.getLogger(JerseyReplicationClient.class);
 
     private final EurekaJerseyClient jerseyClient;
-    private final ApacheHttpClient4 jerseyApacheClient;
+    private final Client jerseyApacheClient;
 
     public JerseyReplicationClient(EurekaJerseyClient jerseyClient, String serviceUrl) {
         super(jerseyClient.getClient(), serviceUrl);
@@ -49,7 +68,7 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
     }
 
     @Override
-    protected void addExtraHeaders(Builder webResource) {
+    protected void addExtraHeaders(Invocation.Builder webResource) {
         webResource.header(PeerEurekaNode.HEADER_REPLICATION, "true");
     }
 
@@ -60,21 +79,21 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
     @Override
     public EurekaHttpResponse<InstanceInfo> sendHeartBeat(String appName, String id, InstanceInfo info, InstanceStatus overriddenStatus) {
         String urlPath = "apps/" + appName + '/' + id;
-        ClientResponse response = null;
+        Response response = null;
         try {
-            WebResource webResource = jerseyClient.getClient().resource(serviceUrl)
+            WebTarget webTarget = jerseyApacheClient.target(serviceUrl)
                     .path(urlPath)
                     .queryParam("status", info.getStatus().toString())
                     .queryParam("lastDirtyTimestamp", info.getLastDirtyTimestamp().toString());
             if (overriddenStatus != null) {
-                webResource = webResource.queryParam("overriddenstatus", overriddenStatus.name());
+                webTarget = webTarget.queryParam("overriddenstatus", overriddenStatus.name());
             }
-            Builder requestBuilder = webResource.getRequestBuilder();
+            Invocation.Builder requestBuilder = webTarget.request();
             addExtraHeaders(requestBuilder);
-            response = requestBuilder.accept(MediaType.APPLICATION_JSON_TYPE).put(ClientResponse.class);
+            response = requestBuilder.accept(MediaType.APPLICATION_JSON_TYPE).put(Entity.json(new EmptyEntity()));
             InstanceInfo infoFromPeer = null;
             if (response.getStatus() == Status.CONFLICT.getStatusCode() && response.hasEntity()) {
-                infoFromPeer = response.getEntity(InstanceInfo.class);
+                infoFromPeer = response.readEntity(InstanceInfo.class);
             }
             return anEurekaHttpResponse(response.getStatus(), infoFromPeer).type(MediaType.APPLICATION_JSON_TYPE).build();
         } finally {
@@ -89,14 +108,15 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
 
     @Override
     public EurekaHttpResponse<Void> statusUpdate(String asgName, ASGStatus newStatus) {
-        ClientResponse response = null;
+        Response response = null;
         try {
             String urlPath = "asg/" + asgName + "/status";
-            response = jerseyApacheClient.resource(serviceUrl)
+            response = jerseyApacheClient.target(serviceUrl)
                     .path(urlPath)
                     .queryParam("value", newStatus.name())
+                    .request()
                     .header(PeerEurekaNode.HEADER_REPLICATION, "true")
-                    .put(ClientResponse.class);
+                    .put(Entity.json(new EmptyEntity()));
             return EurekaHttpResponse.status(response.getStatus());
         } finally {
             if (response != null) {
@@ -107,17 +127,17 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
 
     @Override
     public EurekaHttpResponse<ReplicationListResponse> submitBatchUpdates(ReplicationList replicationList) {
-        ClientResponse response = null;
+        Response response = null;
         try {
-            response = jerseyApacheClient.resource(serviceUrl)
+            response = jerseyApacheClient.target(serviceUrl)
                     .path(PeerEurekaNode.BATCH_URL_PATH)
+                    .request()
                     .accept(MediaType.APPLICATION_JSON_TYPE)
-                    .type(MediaType.APPLICATION_JSON_TYPE)
-                    .post(ClientResponse.class, replicationList);
+                    .post(Entity.json(replicationList));
             if (!isSuccess(response.getStatus())) {
                 return anEurekaHttpResponse(response.getStatus(), ReplicationListResponse.class).build();
             }
-            ReplicationListResponse batchResponse = response.getEntity(ReplicationListResponse.class);
+            ReplicationListResponse batchResponse = response.readEntity(ReplicationListResponse.class);
             return anEurekaHttpResponse(response.getStatus(), batchResponse).type(MediaType.APPLICATION_JSON_TYPE).build();
         } finally {
             if (response != null) {
@@ -172,11 +192,13 @@ public class JerseyReplicationClient extends AbstractJerseyEurekaHttpClient impl
             logger.warn("Cannot find localhost ip", e);
         }
 
-        ApacheHttpClient4 jerseyApacheClient = jerseyClient.getClient();
-        jerseyApacheClient.addFilter(new DynamicGZIPContentEncodingFilter(config));
+        Client jerseyApacheClient = jerseyClient.getClient();
+        jerseyApacheClient.register(new DynamicGZIPContentConfigFilter(config));
+        // Add gzip content encoding support
+        jerseyApacheClient.register(GZipEncoder.class);
 
         EurekaServerIdentity identity = new EurekaServerIdentity(ip);
-        jerseyApacheClient.addFilter(new EurekaIdentityHeaderFilter(identity));
+        jerseyApacheClient.register(new EurekaIdentityHeaderFilter(identity));
 
         return new JerseyReplicationClient(jerseyClient, serviceUrl);
     }

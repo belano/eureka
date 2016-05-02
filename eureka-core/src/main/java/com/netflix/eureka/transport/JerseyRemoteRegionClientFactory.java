@@ -17,6 +17,7 @@
 package com.netflix.eureka.transport;
 
 import javax.inject.Inject;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
@@ -31,8 +32,10 @@ import com.netflix.discovery.shared.transport.jersey.JerseyApplicationClient;
 import com.netflix.eureka.EurekaServerConfig;
 import com.netflix.eureka.EurekaServerIdentity;
 import com.netflix.eureka.resources.ServerCodecs;
-import com.sun.jersey.api.client.filter.GZIPContentEncodingFilter;
-import com.sun.jersey.client.apache4.ApacheHttpClient4;
+
+import javax.ws.rs.client.Client;
+
+import org.glassfish.jersey.message.GZipEncoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -101,12 +104,12 @@ public class JerseyRemoteRegionClientFactory implements TransportClientFactory {
                             );
                 }
                 jerseyClient = clientBuilder.build();
-                ApacheHttpClient4 discoveryApacheClient = jerseyClient.getClient();
+                Client discoveryApacheClient = jerseyClient.getClient();
 
                 // Add gzip content encoding support
                 boolean enableGZIPContentEncodingFilter = serverConfig.shouldGZipContentFromRemoteRegion();
                 if (enableGZIPContentEncodingFilter) {
-                    discoveryApacheClient.addFilter(new GZIPContentEncodingFilter(false));
+                    discoveryApacheClient.register(new GZipEncoder());
                 }
 
                 // always enable client identity headers
@@ -117,7 +120,7 @@ public class JerseyRemoteRegionClientFactory implements TransportClientFactory {
                     logger.warn("Cannot find localhost ip", e);
                 }
                 EurekaServerIdentity identity = new EurekaServerIdentity(ip);
-                discoveryApacheClient.addFilter(new EurekaIdentityHeaderFilter(identity));
+                discoveryApacheClient.register(new EurekaIdentityHeaderFilter(identity));
             }
         }
 

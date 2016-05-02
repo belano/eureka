@@ -27,7 +27,7 @@ ext {
     junit_version='4.11'
     mockserverVersion='3.9.2'
     jetty_version='7.2.0.v20101020'
-    jacksonVersion='2.5.4'
+    jacksonVersion='2.6.5'
     woodstoxVersion='4.4.1'
     karyon3Version='3.0.1-rc.23'
 }
@@ -63,4 +63,3 @@ subprojects {
         }
     }
 }
-

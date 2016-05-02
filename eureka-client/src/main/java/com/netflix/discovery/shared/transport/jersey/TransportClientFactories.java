@@ -7,21 +7,20 @@ import com.netflix.discovery.shared.resolver.EurekaEndpoint;
 import com.netflix.discovery.shared.transport.EurekaHttpClient;
 import com.netflix.discovery.shared.transport.TransportClientFactory;
 import com.netflix.discovery.shared.transport.decorator.MetricsCollectingEurekaHttpClient;
-import com.sun.jersey.api.client.filter.ClientFilter;
-import com.sun.jersey.client.apache4.ApacheHttpClient4;
+import javax.ws.rs.client.*;
 
 import java.util.Collection;
 
 public final class TransportClientFactories {
 
     @Deprecated
-    public static TransportClientFactory newTransportClientFactory(final Collection<ClientFilter> additionalFilters,
+    public static TransportClientFactory newTransportClientFactory(final Collection<ClientRequestFilter> additionalFilters,
                                                                    final EurekaJerseyClient providedJerseyClient) {
-        ApacheHttpClient4 apacheHttpClient = providedJerseyClient.getClient();
+        Client client = providedJerseyClient.getClient();
         if (additionalFilters != null) {
-            for (ClientFilter filter : additionalFilters) {
+            for (ClientRequestFilter filter : additionalFilters) {
                 if (filter != null) {
-                    apacheHttpClient.addFilter(filter);
+                    client.register(filter);
                 }
             }
         }
@@ -44,7 +43,7 @@ public final class TransportClientFactories {
     }
 
     public static TransportClientFactory newTransportClientFactory(final EurekaClientConfig clientConfig,
-                                                                   final Collection<ClientFilter> additionalFilters,
+                                                                   final Collection<ClientRequestFilter> additionalFilters,
                                                                    final InstanceInfo myInstanceInfo) {
         final TransportClientFactory jerseyFactory = JerseyEurekaHttpClientFactory.create(
                 clientConfig,

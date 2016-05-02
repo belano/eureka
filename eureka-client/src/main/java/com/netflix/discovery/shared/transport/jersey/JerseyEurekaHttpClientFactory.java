@@ -16,39 +16,27 @@
 
 package com.netflix.discovery.shared.transport.jersey;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientRequestFilter;
+
+import org.glassfish.jersey.message.GZipEncoder;
+
 import com.netflix.appinfo.AbstractEurekaIdentity;
 import com.netflix.appinfo.EurekaAccept;
 import com.netflix.appinfo.EurekaClientIdentity;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.discovery.EurekaIdentityHeaderFilter;
-import com.netflix.discovery.provider.DiscoveryJerseyProvider;
 import com.netflix.discovery.shared.resolver.EurekaEndpoint;
 import com.netflix.discovery.shared.transport.EurekaClientFactoryBuilder;
 import com.netflix.discovery.shared.transport.EurekaHttpClient;
 import com.netflix.discovery.shared.transport.TransportClientFactory;
 import com.netflix.discovery.shared.transport.jersey.EurekaJerseyClientImpl.EurekaJerseyClientBuilder;
-import com.sun.jersey.api.client.config.ClientConfig;
-import com.sun.jersey.api.client.filter.ClientFilter;
-import com.sun.jersey.api.client.filter.GZIPContentEncodingFilter;
-import com.sun.jersey.client.apache4.ApacheHttpClient4;
-import com.sun.jersey.client.apache4.config.ApacheHttpClient4Config;
-import com.sun.jersey.client.apache4.config.DefaultApacheHttpClient4Config;
-import org.apache.http.client.params.ClientPNames;
-import org.apache.http.conn.scheme.Scheme;
-import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.scheme.SchemeSocketFactory;
-import org.apache.http.conn.ssl.AllowAllHostnameVerifier;
-import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.impl.conn.tsccm.ThreadSafeClientConnManager;
-import org.apache.http.params.CoreProtocolPNames;
-
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
-import static com.netflix.discovery.util.DiscoveryBuildInfo.buildVersion;
 
 /**
  * @author Tomasz Bak
@@ -57,8 +45,7 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
 
     public static final String HTTP_X_DISCOVERY_ALLOW_REDIRECT = "X-Discovery-AllowRedirect";
 
-    private final EurekaJerseyClient jerseyClient;
-    private final ApacheHttpClient4 apacheClient;
+    private final EurekaJerseyClient jerseyClient;;
     private final ApacheHttpClientConnectionCleaner cleaner;
     private final Map<String, String> additionalHeaders;
 
@@ -69,7 +56,6 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
     public JerseyEurekaHttpClientFactory(EurekaJerseyClient jerseyClient, boolean allowRedirects) {
         this(
                 jerseyClient,
-                null,
                 -1,
                 Collections.singletonMap(HTTP_X_DISCOVERY_ALLOW_REDIRECT, allowRedirects ? "true" : "false")
         );
@@ -77,40 +63,32 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
 
     @Deprecated
     public JerseyEurekaHttpClientFactory(EurekaJerseyClient jerseyClient, Map<String, String> additionalHeaders) {
-        this(jerseyClient, null, -1, additionalHeaders);
-    }
-
-    public JerseyEurekaHttpClientFactory(ApacheHttpClient4 apacheClient, long connectionIdleTimeout, Map<String, String> additionalHeaders) {
-        this(null, apacheClient, connectionIdleTimeout, additionalHeaders);
+        this(jerseyClient, -1, additionalHeaders);
     }
 
     private JerseyEurekaHttpClientFactory(EurekaJerseyClient jerseyClient,
-                                          ApacheHttpClient4 apacheClient,
-                                          long connectionIdleTimeout,
-                                          Map<String, String> additionalHeaders) {
+            long connectionIdleTimeout,
+            Map<String, String> additionalHeaders) {
         this.jerseyClient = jerseyClient;
-        this.apacheClient = jerseyClient != null ? jerseyClient.getClient() : apacheClient;
         this.additionalHeaders = additionalHeaders;
-        this.cleaner = new ApacheHttpClientConnectionCleaner(this.apacheClient, connectionIdleTimeout);
+        this.cleaner = new ApacheHttpClientConnectionCleaner(jerseyClient.getClient(), connectionIdleTimeout);
     }
 
     @Override
     public EurekaHttpClient newClient(EurekaEndpoint endpoint) {
-        return new JerseyApplicationClient(apacheClient, endpoint.getServiceUrl(), additionalHeaders);
+        return new JerseyApplicationClient(jerseyClient.getClient(), endpoint.getServiceUrl(), additionalHeaders);
     }
 
     @Override
     public void shutdown() {
-        cleaner.shutdown();
         if (jerseyClient != null) {
             jerseyClient.destroyResources();
-        } else {
-            apacheClient.destroy();
         }
+        cleaner.shutdown();
     }
 
     public static JerseyEurekaHttpClientFactory create(EurekaClientConfig clientConfig,
-                                                       Collection<ClientFilter> additionalFilters,
+                                                       Collection<ClientRequestFilter> additionalFilters,
                                                        InstanceInfo myInstanceInfo,
                                                        AbstractEurekaIdentity clientIdentity) {
         JerseyEurekaHttpClientFactoryBuilder clientBuilder = newBuilder()
@@ -157,10 +135,10 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
      */
     public static class JerseyEurekaHttpClientFactoryBuilder extends EurekaClientFactoryBuilder<JerseyEurekaHttpClientFactory, JerseyEurekaHttpClientFactoryBuilder> {
 
-        private Collection<ClientFilter> additionalFilters = Collections.emptyList();
+        private Collection<ClientRequestFilter> additionalFilters = Collections.emptyList();
         private boolean experimental = false;
 
-        public JerseyEurekaHttpClientFactoryBuilder withAdditionalFilters(Collection<ClientFilter> additionalFilters) {
+        public JerseyEurekaHttpClientFactoryBuilder withAdditionalFilters(Collection<ClientRequestFilter> additionalFilters) {
             this.additionalFilters = additionalFilters;
             return this;
         }
@@ -180,9 +158,6 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
                 additionalHeaders.put(EurekaAccept.HTTP_X_EUREKA_ACCEPT, eurekaAccept.name());
             }
 
-            if (experimental) {
-                return buildExperimental(additionalHeaders);
-            }
             return buildLegacy(additionalHeaders);
         }
 
@@ -199,88 +174,25 @@ public class JerseyEurekaHttpClientFactory implements TransportClientFactory {
                     .withDecoderWrapper(decoderWrapper);
 
             EurekaJerseyClient jerseyClient = clientBuilder.build();
-            ApacheHttpClient4 discoveryApacheClient = jerseyClient.getClient();
-            addFilters(discoveryApacheClient);
+            Client client = jerseyClient.getClient();
+            addFilters(client);
 
             return new JerseyEurekaHttpClientFactory(jerseyClient, additionalHeaders);
         }
 
-        private JerseyEurekaHttpClientFactory buildExperimental(Map<String, String> additionalHeaders) {
-            ThreadSafeClientConnManager cm = createConnectionManager();
-            ClientConfig clientConfig = new DefaultApacheHttpClient4Config();
-
-            if (proxyHost != null) {
-                addProxyConfiguration(clientConfig);
-            }
-
-            DiscoveryJerseyProvider discoveryJerseyProvider = new DiscoveryJerseyProvider(encoderWrapper, decoderWrapper);
-            clientConfig.getSingletons().add(discoveryJerseyProvider);
-
-            // Common properties to all clients
-            cm.setDefaultMaxPerRoute(maxConnectionsPerHost);
-            cm.setMaxTotal(maxTotalConnections);
-            clientConfig.getProperties().put(ApacheHttpClient4Config.PROPERTY_CONNECTION_MANAGER, cm);
-
-            String fullUserAgentName = (userAgent == null ? clientName : userAgent) + "/v" + buildVersion();
-            clientConfig.getProperties().put(CoreProtocolPNames.USER_AGENT, fullUserAgentName);
-
-            // To pin a client to specific server in case redirect happens, we handle redirects directly
-            // (see DiscoveryClient.makeRemoteCall methods).
-            clientConfig.getProperties().put(ClientConfig.PROPERTY_FOLLOW_REDIRECTS, Boolean.FALSE);
-            clientConfig.getProperties().put(ClientPNames.HANDLE_REDIRECTS, Boolean.FALSE);
-
-            ApacheHttpClient4 apacheClient = ApacheHttpClient4.create(clientConfig);
-            addFilters(apacheClient);
-
-            return new JerseyEurekaHttpClientFactory(apacheClient, connectionIdleTimeout, additionalHeaders);
-        }
-
-        /**
-         * Since Jersey 1.19 depends on legacy apache http-client API, we have to as well.
-         */
-        private ThreadSafeClientConnManager createConnectionManager() {
-            try {
-                ThreadSafeClientConnManager connectionManager;
-                if (sslContext != null) {
-                    SchemeSocketFactory socketFactory = new SSLSocketFactory(sslContext, new AllowAllHostnameVerifier());
-                    SchemeRegistry sslSchemeRegistry = new SchemeRegistry();
-                    sslSchemeRegistry.register(new Scheme("https", 443, socketFactory));
-                    connectionManager = new ThreadSafeClientConnManager(sslSchemeRegistry);
-                } else {
-                    connectionManager = new ThreadSafeClientConnManager();
-                }
-                return connectionManager;
-            } catch (Exception e) {
-                throw new IllegalStateException("Cannot initialize Apache connection manager", e);
-            }
-        }
-
-        private void addProxyConfiguration(ClientConfig clientConfig) {
-            if (proxyUserName != null && proxyPassword != null) {
-                clientConfig.getProperties().put(ApacheHttpClient4Config.PROPERTY_PROXY_USERNAME, proxyUserName);
-                clientConfig.getProperties().put(ApacheHttpClient4Config.PROPERTY_PROXY_PASSWORD, proxyPassword);
-            } else {
-                // Due to bug in apache client, user name/password must always be set.
-                // Otherwise proxy configuration is ignored.
-                clientConfig.getProperties().put(ApacheHttpClient4Config.PROPERTY_PROXY_USERNAME, "guest");
-                clientConfig.getProperties().put(ApacheHttpClient4Config.PROPERTY_PROXY_PASSWORD, "guest");
-            }
-            clientConfig.getProperties().put(DefaultApacheHttpClient4Config.PROPERTY_PROXY_URI, "http://" + proxyHost + ':' + proxyPort);
-        }
-
-        private void addFilters(ApacheHttpClient4 discoveryApacheClient) {
+        private void addFilters(Client client) {
             // Add gzip content encoding support
-            discoveryApacheClient.addFilter(new GZIPContentEncodingFilter(false));
+            client.register(GZipEncoder.class);
 
             // always enable client identity headers
             String ip = myInstanceInfo == null ? null : myInstanceInfo.getIPAddr();
             AbstractEurekaIdentity identity = clientIdentity == null ? new EurekaClientIdentity(ip) : clientIdentity;
-            discoveryApacheClient.addFilter(new EurekaIdentityHeaderFilter(identity));
+            client.register(new EurekaIdentityHeaderFilter(identity));
 
             if (additionalFilters != null) {
-                for (ClientFilter filter : additionalFilters) {
+                for (ClientRequestFilter filter : additionalFilters) {
                     if (filter != null) {
-                        discoveryApacheClient.addFilter(filter);
+                        client.register(filter);
                     }
                 }
             }

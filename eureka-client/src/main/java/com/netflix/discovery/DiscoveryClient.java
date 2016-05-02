@@ -81,7 +81,7 @@ import com.netflix.servo.annotations.DataSourceType;
 import com.netflix.servo.monitor.Counter;
 import com.netflix.servo.monitor.Monitors;
 import com.netflix.servo.monitor.Stopwatch;
-import com.sun.jersey.api.client.filter.ClientFilter;
+import javax.ws.rs.client.*;
 
 /**
  * The class that is instrumental for interactions with <tt>Eureka Server</tt>.
@@ -223,7 +223,7 @@ public class DiscoveryClient implements EurekaClient {
 
         private Provider<HealthCheckHandler> healthCheckHandlerProvider;
 
-        private Collection<ClientFilter> additionalFilters;
+        private Collection<ClientRequestFilter> additionalFilters;
 
         private EurekaJerseyClient eurekaJerseyClient;
         
@@ -262,7 +262,7 @@ public class DiscoveryClient implements EurekaClient {
         }
 
         @Inject(optional = true) 
-        public void setAdditionalFilters(Collection<ClientFilter> additionalFilters) {
+        public void setAdditionalFilters(Collection<ClientRequestFilter> additionalFilters) {
             this.additionalFilters = additionalFilters;
         }
 
@@ -460,8 +460,8 @@ public class DiscoveryClient implements EurekaClient {
     private void scheduleServerEndpointTask(EurekaTransport eurekaTransport,
                                             DiscoveryClientOptionalArgs args) {
 
-        Collection<ClientFilter> additionalFilters = args == null
-                ? Collections.<ClientFilter>emptyList()
+        Collection<ClientRequestFilter> additionalFilters = args == null
+                ? Collections.<ClientRequestFilter>emptyList()
                 : args.additionalFilters;
 
         EurekaJerseyClient providedJerseyClient = args == null
